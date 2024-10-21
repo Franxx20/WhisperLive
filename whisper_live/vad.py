@@ -114,7 +114,7 @@ class VoiceActivityDetection():
 
 
 class VoiceActivityDetector:
-    def __init__(self, threshold=0.5, frame_rate=16000):
+    def __init__(self, threshold=0.7, frame_rate=16000):
         """
         Initializes the VoiceActivityDetector with a voice activity detection model and a threshold.
 

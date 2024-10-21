@@ -13,6 +13,7 @@ from websockets.sync.server import serve
 from websockets.exceptions import ConnectionClosed
 from whisper_live.vad import VoiceActivityDetector
 from whisper_live.transcriber import WhisperModel
+
 try:
     from whisper_live.transcriber_tensorrt import WhisperTRTLLM
 except Exception:
@@ -153,8 +154,8 @@ class TranscriptionServer:
         self.single_model = False
 
     def initialize_client(
-        self, websocket, options, faster_whisper_custom_model_path,
-        whisper_tensorrt_path, trt_multilingual
+            self, websocket, options, faster_whisper_custom_model_path,
+            whisper_tensorrt_path, trt_multilingual
     ):
         client: Optional[ServeClientBase] = None
 
@@ -229,8 +230,8 @@ class TranscriptionServer:
                 websocket.close()
                 return False  # Indicates that the connection should not continue
 
-            if self.backend.is_tensorrt():
-                self.vad_detector = VoiceActivityDetector(frame_rate=self.RATE)
+            # if self.backend.is_tensorrt():
+            self.vad_detector = VoiceActivityDetector(frame_rate=self.RATE)
             self.initialize_client(websocket, options, faster_whisper_custom_model_path,
                                    whisper_tensorrt_path, trt_multilingual)
             return True
@@ -341,15 +342,15 @@ class TranscriptionServer:
         if not BackendType.is_valid(backend):
             raise ValueError(f"{backend} is not a valid backend type. Choose backend from {BackendType.valid_types()}")
         with serve(
-            functools.partial(
-                self.recv_audio,
-                backend=BackendType(backend),
-                faster_whisper_custom_model_path=faster_whisper_custom_model_path,
-                whisper_tensorrt_path=whisper_tensorrt_path,
-                trt_multilingual=trt_multilingual
-            ),
-            host,
-            port
+                functools.partial(
+                    self.recv_audio,
+                    backend=BackendType(backend),
+                    faster_whisper_custom_model_path=faster_whisper_custom_model_path,
+                    whisper_tensorrt_path=whisper_tensorrt_path,
+                    trt_multilingual=trt_multilingual
+                ),
+                host,
+                port
         ) as server:
             server.serve_forever()
 
@@ -378,8 +379,9 @@ class TranscriptionServer:
             if self.no_voice_activity_chunks > 3:
                 client = self.client_manager.get_client(websocket)
                 if not client.eos:
+                    logging.info('No voice activity detected. Setting EOS flag')
                     client.set_eos(True)
-                time.sleep(0.1)    # Sleep 100m; wait some voice activity.
+                time.sleep(0.1)  # Sleep 100m; wait some voice activity.
             return False
         return True
 
@@ -412,10 +414,11 @@ class ServeClientBase(object):
         self.t_start = None
         self.exit = False
         self.same_output_threshold = 0
-        self.show_prev_out_thresh = 5   # if pause(no output from whisper) show previous output for 5 seconds
-        self.add_pause_thresh = 3       # add a blank to segment list as a pause(no speech) for 3 seconds
+        self.show_prev_out_thresh = 5  # if pause(no output from whisper) show previous output for 5 seconds
+        self.add_pause_thresh = 2  # add a blank to segment list as a pause(no speech) for 3 seconds
         self.transcript = []
         self.send_last_n_segments = 10
+        # self.eos=False
 
         # text formatting
         self.pick_previous_segments = 2
@@ -449,9 +452,9 @@ class ServeClientBase(object):
 
         """
         self.lock.acquire()
-        if self.frames_np is not None and self.frames_np.shape[0] > 45*self.RATE:
+        if self.frames_np is not None and self.frames_np.shape[0] > 45 * self.RATE:
             self.frames_offset += 30.0
-            self.frames_np = self.frames_np[int(30*self.RATE):]
+            self.frames_np = self.frames_np[int(30 * self.RATE):]
             # check timestamp offset(should be >= self.frame_offset)
             # this basically means that there is no speech as timestamp offset hasnt updated
             # and is less than frame_offset
@@ -469,7 +472,7 @@ class ServeClientBase(object):
         Clip audio if the current chunk exceeds 30 seconds, this basically implies that
         no valid segment for the last 30 seconds from whisper
         """
-        if self.frames_np[int((self.timestamp_offset - self.frames_offset)*self.RATE):].shape[0] > 25 * self.RATE:
+        if self.frames_np[int((self.timestamp_offset - self.frames_offset) * self.RATE):].shape[0] > 25 * self.RATE:
             duration = self.frames_np.shape[0] / self.RATE
             self.timestamp_offset = self.frames_offset + duration - 5
 
@@ -529,7 +532,7 @@ class ServeClientBase(object):
         """
         return input_bytes.shape[0] / self.RATE
 
-    def send_transcription_to_client(self, segments):
+    def send_transcription_to_client(self, segments, eos):
         """
         Sends the specified transcription segments to the client over the websocket connection.
 
@@ -544,6 +547,7 @@ class ServeClientBase(object):
                 json.dumps({
                     "uid": self.client_uid,
                     "segments": segments,
+                    "is_final": eos
                 })
             )
         except Exception as e:
@@ -576,11 +580,11 @@ class ServeClientBase(object):
 
 
 class ServeClientTensorRT(ServeClientBase):
-
     SINGLE_MODEL = None
     SINGLE_MODEL_LOCK = threading.Lock()
 
-    def __init__(self, websocket, task="transcribe", multilingual=False, language=None, client_uid=None, model=None, single_model=False):
+    def __init__(self, websocket, task="transcribe", multilingual=False, language=None, client_uid=None, model=None,
+                 single_model=False):
         """
         Initialize a ServeClient instance.
         The Whisper model is initialized based on the client's language and device availability.
@@ -669,7 +673,7 @@ class ServeClientTensorRT(ServeClientBase):
             duration (float): Duration of the transcribed audio chunk.
         """
         segments = self.prepare_segments({"text": last_segment})
-        self.send_transcription_to_client(segments)
+        self.send_transcription_to_client(segments, self.eos)
         if self.eos:
             self.update_timestamp_offset(last_segment, duration)
 
@@ -730,7 +734,7 @@ class ServeClientTensorRT(ServeClientBase):
                 break
 
             if self.frames_np is None:
-                time.sleep(0.02)    # wait for any audio to arrive
+                time.sleep(0.02)  # wait for any audio to arrive
                 continue
 
             self.clip_audio_if_no_valid_segment()
@@ -749,7 +753,6 @@ class ServeClientTensorRT(ServeClientBase):
 
 
 class ServeClientFasterWhisper(ServeClientBase):
-
     SINGLE_MODEL = None
     SINGLE_MODEL_LOCK = threading.Lock()
 
@@ -774,7 +777,7 @@ class ServeClientFasterWhisper(ServeClientBase):
         super().__init__(client_uid, websocket)
         self.model_sizes = [
             "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-            "medium", "medium.en", "large-v2", "large-v3",
+            "medium", "medium.en", "large-v2", "large-v3",'large-v3-turbo'
         ]
         if not os.path.exists(model):
             self.model_size_or_path = self.check_valid_model(model)
@@ -783,8 +786,9 @@ class ServeClientFasterWhisper(ServeClientBase):
         self.language = "en" if self.model_size_or_path.endswith("en") else language
         self.task = task
         self.initial_prompt = initial_prompt
-        self.vad_parameters = vad_parameters or {"threshold": 0.5}
+        self.vad_parameters = vad_parameters or {"threshold": 0.7}
         self.no_speech_thresh = 0.45
+        self.eos = False if use_vad else True
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cuda":
@@ -831,6 +835,17 @@ class ServeClientFasterWhisper(ServeClientBase):
             compute_type=self.compute_type,
             local_files_only=False,
         )
+        
+    def set_eos(self, eos):
+        """
+        Sets the End of Speech (EOS) flag.
+
+        Args:
+            eos (bool): The value to set for the EOS flag.
+        """
+        self.lock.acquire()
+        self.eos = eos
+        self.lock.release()
 
     def check_valid_model(self, model_size):
         """
@@ -948,7 +963,7 @@ class ServeClientFasterWhisper(ServeClientBase):
             segments = self.get_previous_output()
 
         if len(segments):
-            self.send_transcription_to_client(segments)
+            self.send_transcription_to_client(segments,False)
 
     def speech_to_text(self):
         """
@@ -979,7 +994,7 @@ class ServeClientFasterWhisper(ServeClientBase):
 
             input_bytes, duration = self.get_audio_chunk_for_processing()
             if duration < 1.0:
-                time.sleep(0.1)     # wait for audio chunks to arrive
+                time.sleep(0.1)  # wait for audio chunks to arrive
                 continue
             try:
                 input_sample = input_bytes.copy()
@@ -987,7 +1002,7 @@ class ServeClientFasterWhisper(ServeClientBase):
 
                 if result is None or self.language is None:
                     self.timestamp_offset += duration
-                    time.sleep(0.25)    # wait for voice activity, result is None when no voice activity
+                    time.sleep(0.25)  # wait for voice activity, result is None when no voice activity
                     continue
                 self.handle_transcription_output(result, duration)
 

@@ -256,8 +256,8 @@ closing the connection, it joins the WebSocket thread to ensure proper terminati
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="whisper_live.client.Client.on_message">
-<span class="sig-name descname"><span class="pre">on_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ws</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">message</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#whisper_live.client.Client.on_message" title="Link to this definition">¶</a></dt>
+<dt class="sig sig-object py" id="whisper_live.client.Client.on_message_whisper">
+<span class="sig-name descname"><span class="pre">on_message_whisper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ws</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">message</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#whisper_live.client.Client.on_message_whisper" title="Link to this definition">¶</a></dt>
 <dd><p>Callback function called when a message is received from the server.</p>
 <p>It updates various attributes of the client based on the received message, including
 recording status, language detection, and server messages. If a disconnect message
@@ -270,8 +270,8 @@ message (str): The received message from the server.</p>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="whisper_live.client.Client.on_open">
-<span class="sig-name descname"><span class="pre">on_open</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ws</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#whisper_live.client.Client.on_open" title="Link to this definition">¶</a></dt>
+<dt class="sig sig-object py" id="whisper_live.client.Client.on_open_whisper">
+<span class="sig-name descname"><span class="pre">on_open_whisper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ws</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#whisper_live.client.Client.on_open_whisper" title="Link to this definition">¶</a></dt>
 <dd><p>Callback function called when the WebSocket connection is successfully opened.</p>
 <p>Sends an initial configuration message to the server, including client UID, multilingual mode,
 language selection, and task type.</p>

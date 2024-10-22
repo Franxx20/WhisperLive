@@ -11,7 +11,8 @@ import websocket
 import uuid
 import time
 import ffmpeg
-import whisper_live.utils as utils
+
+from whisper_live import utils
 
 
 class Client:
@@ -122,15 +123,15 @@ class Client:
             self.last_response_received = time.time()
             self.last_received_segment = segments[-1]["text"]
 
-        if self.log_transcription:
-            # Truncate to last 3 entries for brevity.
-            # text = text[-3:]
-            text = text[-1]
-            utils.clear_screen()
-            utils.print_transcript(text)
+        # if self.log_transcription:
+        #     # Truncate to last 3 entries for brevity.
+        #     # text = text[-3:]
+        #     text = text[-1]
+        #     utils.clear_screen()
+        #     utils.print_transcript(text)
 
-        # if self.callback:
-        #     self.callback(text,is_final)
+        if self.callback:
+            self.callback(text,is_final)
 
 
     def on_message(self, ws, message):

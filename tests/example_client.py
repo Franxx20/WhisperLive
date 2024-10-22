@@ -27,6 +27,9 @@ def sample_callback(text, is_final):
     whisper_live.utils.print_transcript(text)
   print(is_final)
 
+def transcription_callback(text,is_final):
+  print(f'transcripcion {text}')
+
 client = TranscriptionClient(
   "localhost",
   9090,
@@ -34,7 +37,7 @@ client = TranscriptionClient(
   translate=False,
   model="tiny.en",
   use_vad=True,
-  callback=sample_callback
+  callback=transcription_callback()
 )
 
 client()

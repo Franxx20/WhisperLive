@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 class BaseTestCase(unittest.TestCase):
-    @patch('whisper_live.client.websocket.WebSocketApp')
-    @patch('whisper_live.client.pyaudio.PyAudio')
+    @patch('src.client.websocket.WebSocketApp')
+    @patch('src.client.pyaudio.PyAudio')
     def setUp(self, mock_pyaudio, mock_websocket):
         self.mock_pyaudio_instance = MagicMock()
         mock_pyaudio.return_value = self.mock_pyaudio_instance
@@ -50,7 +50,7 @@ class TestClientCallbacks(BaseTestCase):
             "model": self.client.model,
             "use_vad": True
         })
-        self.client.on_open(self.mock_ws_app)
+        self.client.on_open_whisper(self.mock_ws_app)
         self.mock_ws_app.send.assert_called_with(expected_message)
 
     def test_on_message(self):
@@ -61,7 +61,7 @@ class TestClientCallbacks(BaseTestCase):
                 "backend": "faster_whisper"
             }
         )
-        self.client.on_message(self.mock_ws_app, message)
+        self.client.on_message_whisper(self.mock_ws_app, message)
 
         message = json.dumps({
             "uid": self.client.uid,
@@ -71,7 +71,7 @@ class TestClientCallbacks(BaseTestCase):
                 {"start": 2, "end": 3, "text": "Test transcript 3"}
             ]
         })
-        self.client.on_message(self.mock_ws_app, message)
+        self.client.on_message_whisper(self.mock_ws_app, message)
 
         # Assert that the transcript was updated correctly
         self.assertEqual(len(self.client.transcript), 2)
@@ -112,8 +112,8 @@ class TestSendingAudioPacket(BaseTestCase):
         self.client.client_socket.send.assert_called_with(self.mock_audio_packet, websocket.ABNF.OPCODE_BINARY)
 
 class TestTee(BaseTestCase):
-    @patch('whisper_live.client.websocket.WebSocketApp')
-    @patch('whisper_live.client.pyaudio.PyAudio')
+    @patch('src.client.websocket.WebSocketApp')
+    @patch('src.client.pyaudio.PyAudio')
     def setUp(self, mock_audio, mock_websocket):
         super().setUp()
         self.client2 = Client(host='localhost', port=9090, lang="es", translate=False, srt_file_path="transcript.srt")

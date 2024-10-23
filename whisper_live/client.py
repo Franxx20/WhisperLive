@@ -13,6 +13,7 @@ import time
 import ffmpeg
 
 from whisper_live import utils
+from whisper_live.new.transcript_buffer import TranscriptBuffer
 
 
 class Client:
@@ -68,6 +69,7 @@ class Client:
             self.task = "translate"
 
         self.audio_bytes = None
+        self.print_buffer = TranscriptBuffer()
 
         if host is not None and port is not None:
             socket_url = f"ws://{host}:{port}"
@@ -123,15 +125,16 @@ class Client:
             self.last_response_received = time.time()
             self.last_received_segment = segments[-1]["text"]
 
-        # if self.log_transcription:
-        #     # Truncate to last 3 entries for brevity.
-        #     # text = text[-3:]
-        #     text = text[-1]
-        #     utils.clear_screen()
-        #     utils.print_transcript(text)
+        if self.log_transcription:
+            # Truncate to last 3 entries for brevity.
+            # text = text[-3:]
+            # text = text[-1]
+            # utils.clear_screen()
+            # utils.print_transcript(text)
+            self.print_buffer.update_buffer("".join(text))
 
-        if self.callback:
-            self.callback(text,is_final)
+        # if self.callback:
+        #     self.callback(text,is_final)
 
 
     def on_message(self, ws, message):

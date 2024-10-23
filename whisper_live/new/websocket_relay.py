@@ -16,15 +16,57 @@ logging.basicConfig(level=logging.INFO)
 codec = Codec()
 
 
+def handle_get_request(request, response):
+    if not request.get('params'):
+        print('Error missing request parameters')
+        return
+
+    params = {
+
+    }
+
+    for p in request.get('params'):
+        if p == 'codec':
+            params['codec'] = codec.selected_codec
+        elif p == 'language':
+            params['language'] = 'en-US'
+        elif p == 'results':
+            params['results'] = 'this is a result'
+        else:
+            print('unsupported parameter')
+
+    response['params'] = params
+
 def handle_setup(request, response):
     print('received setup')
     response['codecs'] = [codec.selected_codec]
     response['params'] = {}
 
 
+def handle_set_request(request, response):
+    global codec
+    params = {}
+
+    codecs = None
+    if request.get('codecs'):
+        codecs = codec.selected_codec,
+
+    if codec:
+        response['codecs'] = codecs
+
+    if 'language' in request:
+        params['language'] = 'en-US'
+    else:
+        print(f'Ignoring unsopported parameter')
+
+    response['params'] = params
+
+
 def handle_request(message: dict):
     handlers = {
         'setup': handle_setup,
+        'set': handle_set_request,
+        'get': handle_get_request,
     }
 
     response = {
@@ -45,6 +87,7 @@ def handle_request(message: dict):
     # else:
     #
     try:
+        print(message)
         handlers[message['request']](message, response)
     except:
         print('error ocurred')
@@ -53,20 +96,20 @@ def handle_request(message: dict):
 
 
 class WebSocketRelay:
-    def __init__(self, ws_ast_host="0.0.0.0", ws_ast_port=2700, ws_whisper_url="ws://127.0.0.1:9090"):
+    def __init__(self, ws_ast_host="127.0.0.1", ws_ast_port=2700, ws_whisper_url="ws://127.0.0.1:9090"):
         self.last_response_received = None
         self.server_backend = "faster_whisper"
         self.server_error = False
         self.waiting = False
         self.model = 'tiny.en'
-        self.ws_ast_host = ws_ast_host  # WebSocket ast host (server)
-        self.ws_ast_port = ws_ast_port  # WebSocket ast port (server)
-        self.ws_whisper_url = ws_whisper_url  # WebSocket whisper URL (client)
-        self.ws_whisper = None  # WebSocket whisper client connection
-        self.client_connections = {}  # Track clients connected to WebSocket ast
+        self.ws_ast_host = ws_ast_host
+        self.ws_ast_port = ws_ast_port
+        self.ws_whisper_url = ws_whisper_url
+        self.ws_whisper = None
+        self.client_connections = {}
 
         self.task = "transcribe"
-        self.use_vad = True
+        self.use_vad = False
         self.uid = str(uuid.uuid4())
         self.language = 'en'
         self.last_segment = None
@@ -124,18 +167,15 @@ class WebSocketRelay:
                 f"[INFO]: Server detected language {self.language} with probability {lang_prob}"
             )
 
-        # Find the original client to send the response back
         client_id = getattr(self, 'last_client_id', None)
         if client_id is None or client_id not in self.client_connections:
             logging.error("Unable to find the original client to send the response")
             return
 
-        # Send the response back to the original AST client
         client_websocket = self.client_connections[client_id]
         asyncio.run_coroutine_threadsafe(client_websocket.send(message), asyncio.get_event_loop())
 
         logging.info(f"Sent response back to client {client_id}")
-
 
     def on_open_whisper(self, ws_whisper):
         """
@@ -161,11 +201,10 @@ class WebSocketRelay:
             )
         )
 
-
     async def websocket_ast_handler(self, ws_ast, path):
         """Handle incoming connections and messages from WebSocket ast clients."""
-        client_id = id(ws_ast)  # Unique identifier for each client connection
-        self.client_connections[client_id] = ws_ast  # Store client connection
+        client_id = id(ws_ast)
+        self.client_connections[client_id] = ws_ast
 
         logging.info(f"Client {client_id} connected to WebSocket ast")
         try:
@@ -195,7 +234,7 @@ class WebSocketRelay:
         except websockets.exceptions.ConnectionClosed:
             logging.info(f"Client {client_id} disconnected")
         finally:
-            del self.client_connections[client_id]  # Remove client from active connections
+            del self.client_connections[client_id]
 
     def start_websocket_whisper(self):
         """Start the WebSocket whisper client."""
@@ -204,10 +243,9 @@ class WebSocketRelay:
             on_message=lambda ws, message: self.on_message_whisper(ws, message),
             on_open=lambda ws: self.on_open_whisper(ws),
             on_error=lambda ws, err: logging.error(f"WebSocket whisper error: {err}"),
-            on_close = lambda ws, code, msg: self.on_close(ws,code, msg)
+            on_close=lambda ws, code, msg: self.on_close(ws, code, msg)
         )
         self.ws_whisper.run_forever()
-
 
     def start_websocket_ast(self):
         """Start the WebSocket ast server."""
@@ -216,12 +254,9 @@ class WebSocketRelay:
         logging.info(f"WebSocket ast server running on {self.ws_ast_host}:{self.ws_ast_port}")
         asyncio.get_event_loop().run_forever()
 
-
     def run(self):
         """Run the relay by starting both WebSocket ast server and WebSocket whisper client."""
-        # Start WebSocket whisper client in a separate thread
         threading.Thread(target=self.start_websocket_whisper, daemon=True).start()
-        # Start WebSocket ast server (blocking call)
         self.start_websocket_ast()
 
     def on_close(self, ws, code, msg):
@@ -229,12 +264,11 @@ class WebSocketRelay:
         self.waiting = False
 
 
-# Example usage
 if __name__ == "__main__":
     relay = WebSocketRelay(
-        ws_ast_host="0.0.0.0",  # WebSocket ast host (server)
-        ws_ast_port=2700,  # WebSocket ast port (server)
-        ws_whisper_url="ws://127.0.0.1:9090"  # WebSocket whisper URL (client)
+        ws_ast_host="0.0.0.0",
+        ws_ast_port=2700,
+        ws_whisper_url="ws://127.0.0.1:9090"
     )
     try:
         relay.run()

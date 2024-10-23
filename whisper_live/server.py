@@ -934,10 +934,10 @@ class ServeClientFasterWhisper(ServeClientBase):
                             in speech.
         """
         segments = []
-        if self.t_start is None:
-            self.t_start = time.time()
-        if time.time() - self.t_start < self.show_prev_out_thresh:
-            segments = self.prepare_segments()
+        # if self.t_start is None:
+        #     self.t_start = time.time()
+        # if time.time() - self.t_start < self.show_prev_out_thresh:
+        #     segments = self.prepare_segments()
 
         # add a blank if there is no speech for 3 seconds
         if len(self.text) and self.text[-1] != '':
@@ -958,12 +958,16 @@ class ServeClientFasterWhisper(ServeClientBase):
             self.t_start = None
             last_segment = self.update_segments(result, duration)
             segments = self.prepare_segments(last_segment)
-        else:
-            # show previous output if there is pause i.e. no output from whisper
-            segments = self.get_previous_output()
+        # else:
+        #     # show previous output if there is pause i.e. no output from whisper
+        #     segments = self.get_previous_output()
 
         if len(segments):
-            self.send_transcription_to_client(segments,False)
+            # print(segments)
+            # self.send_transcription_to_client(segments,False)
+            if last_segment:
+                self.send_transcription_to_client([last_segment],False)
+
 
     def speech_to_text(self):
         """

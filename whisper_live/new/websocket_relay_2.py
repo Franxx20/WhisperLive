@@ -88,7 +88,6 @@ def handle_request(message: dict):
 class WebSocketRelay:
     def __init__(self, ws_ast_host="127.0.0.1", ws_ast_port=2700, ws_whisper_url="ws://127.0.0.1:9090"):
         self.last_client_id = None
-        self.last_response_received = None
         self.server_backend = "faster_whisper"
         self.server_error = False
         self.waiting = False
@@ -96,16 +95,11 @@ class WebSocketRelay:
         self.ws_ast_host = ws_ast_host
         self.ws_ast_port = ws_ast_port
         self.ws_whisper_url = ws_whisper_url
-        self.ws_whisper = None
         self.client_connections = {}
-
-        self.task = "transcribe"
-        self.use_vad = True
-        self.uid = str(uuid.uuid4())
         self.language = 'en'
-        self.last_segment = None
-        self.last_received_segment = None
-        self.log_transcription = True
+
+        self.whisper_event_loop = None
+        self.ws_whisper = None
 
     def handle_status_messages(self, message_data):
         """Handles server status messages."""
@@ -119,21 +113,27 @@ class WebSocketRelay:
         elif status == "WARNING":
             print(f"Message from Server: {message_data['message']}")
 
+    async def send_to_client(self, client_id, message):
+        """Send a message back to the AST client."""
+        client_websocket = self.client_connections.get(client_id)
+        # message_json = json.dumps(message)
+        results = {
+            [message.get('segments')[0].get('text')]
+        }
+        request = {
+            'request': "set",
+            'id': f"{uuid.uuid4()}",
+            'results': results,
+        }
+        if client_websocket:
+            await client_websocket.send(json.dumps(request))
+
     def on_message_whisper(self, ws_whisper, message):
         """
-              Callback function called when a message is received from the server.
-
-              It updates various attributes of the client based on the received message, including
-              recording status, language detection, and server messages. If a disconnect message
-              is received, it sets the recording status to False.
-
-              Args:
-                  ws (websocket.WebSocketApp): The WebSocket client instance.
-                  message (str): The received message from the server.
-
-              """
+        Callback for handling messages from the Whisper WebSocket.
+        """
         message = json.loads(message)
-        print(f'response from whisper {message}')
+        print(f"Response from Whisper: {message}")
 
         if "status" in message.keys():
             self.handle_status_messages(message)
@@ -143,7 +143,6 @@ class WebSocketRelay:
             print("[INFO]: Server disconnected due to overtime.")
 
         if "message" in message.keys() and message["message"] == "SERVER_READY":
-            self.last_response_received = time.time()
             self.server_backend = message["backend"]
             print(f"[INFO]: Server Running with backend {self.server_backend}")
             return
@@ -155,99 +154,62 @@ class WebSocketRelay:
                 f"[INFO]: Server detected language {self.language} with probability {lang_prob}"
             )
 
-        client_id = getattr(self, 'last_client_id', None)
+        client_id = self.last_client_id
         if client_id is None or client_id not in self.client_connections:
             logging.error("Unable to find the original client to send the response")
             return
 
-        client_websocket = self.client_connections[client_id]
-        asyncio.run_coroutine_threadsafe(client_websocket.send(message), asyncio.get_event_loop())
-
-        logging.info(f"Sent response back to client {client_id}")
+        asyncio.run_coroutine_threadsafe(self.send_to_client(client_id, message), asyncio.get_event_loop())
 
     def on_open_whisper(self, ws_whisper):
         """
-        Callback function called when the WebSocket connection is successfully opened.
-
-        Sends an initial configuration message to the server, including client UID,
-        language selection, and task type.
-
-        Args:
-            ws_whisper (websocket.WebSocketApp): The WebSocket client instance.
-
+        Called when the Whisper WebSocket connection is opened.
         """
-        print("[INFO]: Opened connection")
-        ws_whisper.send(
-            json.dumps(
-                {
-                    "uid": str(uuid.uuid4()),
-                    "language": self.language,
-                    "task": self.task,
-                    "model": self.model,
-                    "use_vad": self.use_vad,
-                }
-            )
-        )
-
-    @staticmethod
-    def bytes_to_float_array(audio_bytes):
-        """
-        Convert audio data from bytes to a NumPy float array.
-
-        It assumes that the audio data is in 16-bit PCM format. The audio data is normalized to
-        have values between -1 and 1.
-
-        Args:
-            audio_bytes (bytes): Audio data in bytes.
-
-        Returns:
-            np.ndarray: A NumPy array containing the audio data as float values normalized between -1 and 1.
-        """
-        raw_data = np.frombuffer(buffer=audio_bytes, dtype=np.int16)
-        return raw_data.astype(np.float32) / 32768.0
+        print("[INFO]: Opened Whisper WebSocket connection")
+        ws_whisper.send(json.dumps({
+            "uid": str(uuid.uuid4()),
+            "language": self.language,
+            "task": "transcribe",
+            "model": self.model,
+            "use_vad": True,
+        }))
 
     async def websocket_ast_handler(self, ws_ast, path):
-        """Handle incoming connections and messages from WebSocket ast clients."""
+        """Handle AST WebSocket connections."""
         client_id = id(ws_ast)
         self.client_connections[client_id] = ws_ast
 
-        logging.info(f"Client {client_id} connected to WebSocket ast")
+        logging.info(f"Client {client_id} connected")
         try:
             async for message in ws_ast:
                 if isinstance(message, bytes):
-
                     pcm_data = decode_ulaw_to_pcm(message)
-                    audio_array = self.bytes_to_float_array(pcm_data)
+                    audio_array = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
 
+                    # Send audio data to Whisper
                     self.ws_whisper.send(audio_array.tobytes(), websocket.ABNF.OPCODE_BINARY)
 
                     self.last_client_id = client_id
                 else:
                     parsed_message = json.loads(message)
-                    print(parsed_message)
-                    if 'request' in parsed_message:
-                        parsed_message = handle_request(parsed_message)
-                    else:
-                        parsed_message = None
-
-                    print(f'handled: {parsed_message}')
-                    if parsed_message:
-                        parsed_message = json.dumps(parsed_message)
-                        await ws_ast.send(parsed_message)
-                        # print('message sent')
+                    response = handle_request(parsed_message)
+                    if response:
+                        await ws_ast.send(json.dumps(response))
         except websockets.exceptions.ConnectionClosed:
             logging.info(f"Client {client_id} disconnected")
         finally:
             del self.client_connections[client_id]
 
-    def start_websocket_whisper(self):
-        """Start the WebSocket whisper client."""
+    def start_whisper_loop(self):
+        """Start the WebSocket Whisper client in a separate event loop."""
+        self.whisper_event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.whisper_event_loop)
         self.ws_whisper = websocket.WebSocketApp(
             self.ws_whisper_url,
-            on_message=lambda ws, message: self.on_message_whisper(ws, message),
-            on_open=lambda ws: self.on_open_whisper(ws),
-            on_error=lambda ws, err: logging.error(f"WebSocket whisper error: {err}"),
-            on_close=lambda ws, code, msg: self.on_close(ws, code, msg)
+            on_message=self.on_message_whisper,
+            on_open=self.on_open_whisper,
+            on_error=lambda ws, err: logging.error(f"WebSocket Whisper error: {err}"),
+            on_close=lambda ws, code, msg: logging.info(f"Whisper WebSocket closed: {code}, {msg}")
         )
         self.ws_whisper.run_forever()
 
@@ -258,17 +220,13 @@ class WebSocketRelay:
         logging.info(f"WebSocket AST server running on {self.ws_ast_host}:{self.ws_ast_port}")
         asyncio.get_event_loop().run_forever()
 
-
     def run(self):
-        """Run the relay by starting both WebSocket ast server and WebSocket whisper client."""
-        whisper_thread = threading.Thread(target=self.start_websocket_whisper, daemon=True)
+        """Run both the AST server and Whisper client in separate threads."""
+        whisper_thread = threading.Thread(target=self.start_whisper_loop, daemon=True)
         whisper_thread.start()
+
+        # Run the AST WebSocket server
         self.start_websocket_ast()
-
-
-    def on_close(self, ws, code, msg):
-        print(f"[INFO]: Websocket connection closed: {code}: {msg}")
-        self.waiting = False
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ import torch
 import numpy as np
 from websockets.sync.server import serve
 from websockets.exceptions import ConnectionClosed
+
+from whisper_live.new.audio_processing import decode_ulaw_to_pcm
 from whisper_live.vad import VoiceActivityDetector
 from whisper_live.transcriber import WhisperModel
 
@@ -214,10 +216,17 @@ class TranscriptionServer:
         Returns:
             A numpy array containing the audio.
         """
+
         frame_data = websocket.recv()
-        if frame_data == b"END_OF_AUDIO":
+        data = decode_ulaw_to_pcm(frame_data)
+        raw_data = np.frombuffer(buffer=data, dtype=np.int16)
+        processed_data = raw_data.astype(np.float32) / 32768.0
+        binary_data = processed_data.tobytes()
+        # if frame_data == b"END_OF_AUDIO":
+        # print(binary_data)
+        if binary_data == b"END_OF_AUDIO":
             return False
-        return np.frombuffer(frame_data, dtype=np.float32)
+        return np.frombuffer(binary_data, dtype=np.float32)
 
     def handle_new_connection(self, websocket, faster_whisper_custom_model_path,
                               whisper_tensorrt_path, trt_multilingual):
@@ -225,6 +234,7 @@ class TranscriptionServer:
             logging.info("New client connected")
             options = websocket.recv()
             options = json.loads(options)
+            print(options)
             self.use_vad = options.get('use_vad')
             if self.client_manager.is_server_full(websocket, options):
                 websocket.close()
@@ -291,7 +301,8 @@ class TranscriptionServer:
             whisper_tensorrt_path (str): Required for tensorrt backend.
             trt_multilingual(bool): Only used for tensorrt, True if multilingual model.
 
-        Raises:
+        Raises    raise ValueError(
+ValueError: Required inputs (['state']) are missing from input feed (['input', 'h', 'c', 'sr']).:
             Exception: If there is an error during the audio frame processing.
         """
         self.backend = backend
@@ -542,12 +553,13 @@ class ServeClientBase(object):
         Returns:
             segments (list): A list of transcription segments to be sent to the client.
         """
+        logging.info('enviando información al cliente')
         try:
             self.websocket.send(
                 json.dumps({
                     "uid": self.client_uid,
                     "segments": segments,
-                    "is_final": eos
+                    # "is_final": eos
                 })
             )
         except Exception as e:
@@ -777,7 +789,7 @@ class ServeClientFasterWhisper(ServeClientBase):
         super().__init__(client_uid, websocket)
         self.model_sizes = [
             "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-            "medium", "medium.en", "large-v2", "large-v3",'large-v3-turbo'
+            "medium", "medium.en", "large-v2", "large-v3", 'large-v3-turbo'
         ]
         if not os.path.exists(model):
             self.model_size_or_path = self.check_valid_model(model)
@@ -835,7 +847,7 @@ class ServeClientFasterWhisper(ServeClientBase):
             compute_type=self.compute_type,
             local_files_only=False,
         )
-        
+
     def set_eos(self, eos):
         """
         Sets the End of Speech (EOS) flag.
@@ -963,11 +975,10 @@ class ServeClientFasterWhisper(ServeClientBase):
         #     segments = self.get_previous_output()
 
         if len(segments):
-            # print(segments)
+            print(last_segment)
             # self.send_transcription_to_client(segments,False)
             if last_segment:
-                self.send_transcription_to_client([last_segment],False)
-
+                self.send_transcription_to_client(last_segment.get('text'), False)
 
     def speech_to_text(self):
         """
@@ -1003,6 +1014,7 @@ class ServeClientFasterWhisper(ServeClientBase):
             try:
                 input_sample = input_bytes.copy()
                 result = self.transcribe_audio(input_sample)
+                # print(f'result {result}')
 
                 if result is None or self.language is None:
                     self.timestamp_offset += duration

@@ -11,6 +11,8 @@ import time
 import ffmpeg
 import whisper_live.utils as utils
 
+size_flag = False
+
 
 class Client:
     """
@@ -206,6 +208,7 @@ class Client:
         )
 
     def send_packet_to_server(self, message):
+        global size_flag
         """
         Send an audio packet to the server using WebSocket.
 
@@ -213,6 +216,9 @@ class Client:
             message (bytes): The audio data packet in bytes to be sent to the server.
 
         """
+        if not size_flag:
+            print(f"size of message: {len(message)}")
+            size_flag=True
         try:
             self.client_socket.send(message, websocket.ABNF.OPCODE_BINARY)
         except Exception as e:
@@ -466,11 +472,19 @@ class TranscriptionTeeClient:
                         if not any(client.recording for client in self.clients):
                             break
                         data = self.stream.read(self.chunk, exception_on_overflow=False)
+                        if not size_flag:
+                            print(f'size of stream data: {len(data)}')
                         self.frames += data
 
                         audio_array = self.bytes_to_float_array(data)
-
+                        if not size_flag:
+                            print(f'size of data to numpy float array: {len(audio_array)}')
+                        # print(f'size of audio_array no numpy: {len(audio_array)}')
+                        #
                         self.multicast_packet(audio_array.tobytes())
+                        # print(f'size of audio_array: {len(audio_array.tobytes())}')
+                        if not size_flag:
+                            print(f'size of float array to bytes: {len(audio_array.tobytes())}')
 
                         # save frames if more than a minute
                         if len(self.frames) > 60 * self.rate:

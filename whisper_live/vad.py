@@ -39,10 +39,14 @@ class VoiceActivityDetection():
 
         if sr not in self.sample_rates:
             raise ValueError(f"Supported sampling rates: {self.sample_rates} (or multiply of 16000)")
+        # print(f'sr {sr}')
+        # print(f'xshape  {x.shape[1]} value {sr/x.shape[1]}')
 
         if sr / x.shape[1] > 31.25:
+        # if sr / x.shape[1] > 50:
             raise ValueError("Input audio chunk is too short")
 
+        # print('i am here')
         return x, sr
 
     def reset_states(self, batch_size=1):
@@ -94,7 +98,7 @@ class VoiceActivityDetection():
         return stacked.cpu()
 
     @staticmethod
-    def download(model_url="https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx"):
+    def download(model_url="https://github.com/snakers4/silero-vad/raw/v4.0/files/silero_vad.onnx"):
         target_dir = os.path.expanduser("~/.cache/whisper-live/")
 
         # Ensure the target directory exists
@@ -138,5 +142,6 @@ class VoiceActivityDetector:
             bool: True if the speech probability exceeds the threshold, indicating the presence of voice activity;
                   False otherwise.
         """
-        speech_prob = self.model(torch.from_numpy(audio_frame), self.frame_rate).item()
+        speech_prob = self.model(torch.from_numpy(audio_frame.copy()), self.frame_rate).item()
+        # print(f'speech_prob {speech_prob}')
         return speech_prob > self.threshold

@@ -4,6 +4,8 @@ import threading
 import json
 import functools
 import logging
+import wave
+
 import torch
 import numpy as np
 from websockets.sync.server import serve
@@ -176,25 +178,6 @@ class TranscriptionServer:
 
         self.client_manager.add_client(websocket, client)
 
-    def get_audio_from_websocket(self, websocket):
-        """
-        Receives audio buffer from websocket and creates a numpy array out of it.
-
-        Args:
-            websocket: The websocket to receive audio from.
-
-        Returns:
-            A numpy array containing the audio.
-        """
-        frame_data = websocket.recv()
-        if frame_data == b"END_OF_AUDIO":
-            return False
-
-        frame_data_size = len(frame_data)
-        # print("Frame data size:", frame_data_size, "bytes")
-
-        return np.frombuffer(frame_data, dtype=np.float32)
-
     # def get_audio_from_websocket(self, websocket):
     #     """
     #     Receives audio buffer from websocket and creates a numpy array out of it.
@@ -205,19 +188,38 @@ class TranscriptionServer:
     #     Returns:
     #         A numpy array containing the audio.
     #     """
-    #
     #     frame_data = websocket.recv()
-    #     # print(f'size of frame_data {len(frame_data)}')
-    #     data: bytes = decode_ulaw_to_pcm(frame_data)
-    #     # print(f'size of data {len(data)}')
-    #     raw_data = np.frombuffer(buffer=data, dtype=np.int16)
-    #     processed_data = raw_data.astype(np.float32) / 32768.0
-    #     binary_data = processed_data.tobytes()
-    #     # if frame_data == b"END_OF_AUDIO":
-    #     # print(binary_data)
-    #     # if binary_data == b"END_OF_AUDIO":
-    #     #     return False
-    #     return np.frombuffer(binary_data, dtype=np.float32)
+    #     if frame_data == b"END_OF_AUDIO":
+    #         return False
+    #
+    #     # frame_data_size = len(frame_data)
+    #     # print("Frame data size:", frame_data_size, "bytes")
+    #
+    #     return np.frombuffer(frame_data, dtype=np.float32)
+
+    def get_audio_from_websocket(self, websocket):
+        """
+        Receives audio buffer from websocket and creates a numpy array out of it.
+
+        Args:
+            websocket: The websocket to receive audio from.
+
+        Returns:
+            A numpy array containing the audio.
+        """
+
+        frame_data = websocket.recv()
+        # print(f'size of frame_data {len(frame_data)}')
+        # data: bytes = decode_ulaw_to_pcm(frame_data)
+        # print(f'size of data {len(data)}')
+        raw_data = np.frombuffer(buffer=frame_data, dtype=np.int16)
+        processed_data = raw_data.astype(np.float32) / 32768.0
+        binary_data = processed_data.tobytes()
+        # if frame_data == b"END_OF_AUDIO":
+        # print(binary_data)
+        # if binary_data == b"END_OF_AUDIO":
+        #     return False
+        return np.frombuffer(binary_data, dtype=np.float32)
 
     def handle_new_connection(self, websocket, faster_whisper_custom_model_path,
                               whisper_tensorrt_path, trt_multilingual):
@@ -231,7 +233,7 @@ class TranscriptionServer:
                 return False  # Indicates that the connection should not continue
 
             if self.backend == "tensorrt" or self.use_vad:
-                self.vad_detector = VoiceActivityDetector(frame_rate=self.RATE,threshold=0.5)
+                self.vad_detector = VoiceActivityDetector(frame_rate=self.RATE, threshold=0.5)
             self.initialize_client(websocket, options, faster_whisper_custom_model_path,
                                    whisper_tensorrt_path, trt_multilingual)
             return True
@@ -693,29 +695,41 @@ class ServeClientTensorRT(ServeClientBase):
             Exception: If there is an issue with audio processing or WebSocket communication.
 
         """
-        while True:
-            if self.exit:
-                logging.info("Exiting speech to text thread")
-                break
+        wav_filename = "speech.wav"  # Customize the output filename
 
-            if self.frames_np is None:
-                time.sleep(0.02)  # wait for any audio to arrive
-                # time.sleep(0.1)  # wait for any audio to arrive
-                continue
+        with wave.open(wav_filename, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono (adjust for stereo if needed)
+            wav_file.setsampwidth(2)  # 16-bit samples (adjust for different bit depth)
+            # Set framerate based on your audio stream (replace with actual value)
+            wav_file.setframerate(44100)  # Common sample rate (adjust if different)
 
-            self.clip_audio_if_no_valid_segment()
+            frames = []  # List to store audio frames temporarily
+            while True:
+                if self.exit:
+                    logging.info("Exiting speech to text thread")
+                    break
 
-            input_bytes, duration = self.get_audio_chunk_for_processing()
-            if duration < 0.4:
-                continue
+                if self.frames_np is None:
+                    time.sleep(0.02)  # wait for any audio to arrive
+                    # time.sleep(0.1)  # wait for any audio to arrive
+                    continue
 
-            try:
-                input_sample = input_bytes.copy()
-                logging.info(f"[WhisperTensorRT:] Processing audio with duration: {duration}")
-                self.transcribe_audio(input_sample)
+                self.clip_audio_if_no_valid_segment()
 
-            except Exception as e:
-                logging.error(f"[ERROR]: {e}")
+                input_bytes, duration = self.get_audio_chunk_for_processing()
+                if duration < 0.4:
+                    continue
+
+                try:
+                    input_sample = input_bytes.copy()
+                    logging.info(f"[WhisperTensorRT:] Processing audio with duration: {duration}")
+                    self.transcribe_audio(input_sample)
+                    frames.append(input_sample)
+
+                except Exception as e:
+                    logging.error(f"[ERROR]: {e}")
+            for frame in frames:
+                wav_file.writeframes(frame)
 
 
 class ServeClientFasterWhisper(ServeClientBase):
@@ -924,32 +938,44 @@ class ServeClientFasterWhisper(ServeClientBase):
             Exception: If there is an issue with audio processing or WebSocket communication.
 
         """
-        while True:
-            if self.exit:
-                logging.info("Exiting speech to text thread")
-                break
+        wav_filename = "speech.wav"  # Customize the output filename
 
-            if self.frames_np is None:
-                continue
+        with wave.open(wav_filename, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono (adjust for stereo if needed)
+            wav_file.setsampwidth(1)  # 16-bit samples (adjust for different bit depth)
+            # Set framerate based on your audio stream (replace with actual value)
+            wav_file.setframerate(8000)  # Common sample rate (adjust if different)
 
-            self.clip_audio_if_no_valid_segment()
+            frames = []  # List to store audio frames temporarily
+            while True:
+                if self.exit:
+                    logging.info("Exiting speech to text thread")
+                    break
 
-            input_bytes, duration = self.get_audio_chunk_for_processing()
-            if duration < 1.0:
-                continue
-            try:
-                input_sample = input_bytes.copy()
-                result = self.transcribe_audio(input_sample)
-
-                if result is None or self.language is None:
-                    self.timestamp_offset += duration
-                    time.sleep(0.25)  # wait for voice activity, result is None when no voice activity
+                if self.frames_np is None:
                     continue
-                self.handle_transcription_output(result, duration)
 
-            except Exception as e:
-                logging.error(f"[ERROR]: Failed to transcribe audio chunk: {e}")
-                time.sleep(0.01)
+                self.clip_audio_if_no_valid_segment()
+
+                input_bytes, duration = self.get_audio_chunk_for_processing()
+                if duration < 1.0:
+                    continue
+                try:
+                    input_sample = input_bytes.copy()
+                    result = self.transcribe_audio(input_sample)
+
+                    if result is None or self.language is None:
+                        self.timestamp_offset += duration
+                        time.sleep(0.25)  # wait for voice activity, result is None when no voice activity
+                        continue
+                    frames.append(input_sample)
+                    self.handle_transcription_output(result, duration)
+
+                except Exception as e:
+                    logging.error(f"[ERROR]: Failed to transcribe audio chunk: {e}")
+                    time.sleep(0.01)
+            for frame in frames:
+                wav_file.writeframes(frame)
 
     def format_segment(self, start, end, text):
         """

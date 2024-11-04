@@ -5,6 +5,7 @@ import json
 import functools
 import logging
 import wave
+import scipy.signal
 
 import torch
 import numpy as np
@@ -209,17 +210,26 @@ class TranscriptionServer:
         """
 
         frame_data = websocket.recv()
-        # print(f'size of frame_data {len(frame_data)}')
-        # data: bytes = decode_ulaw_to_pcm(frame_data)
-        # print(f'size of data {len(data)}')
-        raw_data = np.frombuffer(buffer=frame_data, dtype=np.int16)
+
+        # Decode u-law to PCM
+        pcm_data = decode_ulaw_to_pcm(frame_data)
+
+        # Convert PCM bytes to numpy array
+        raw_data = np.frombuffer(pcm_data, dtype=np.int16)
+
+        # Normalize the PCM data to float32
         processed_data = raw_data.astype(np.float32) / 32768.0
-        binary_data = processed_data.tobytes()
-        # if frame_data == b"END_OF_AUDIO":
-        # print(binary_data)
-        # if binary_data == b"END_OF_AUDIO":
-        #     return False
-        return np.frombuffer(binary_data, dtype=np.float32)
+
+        # Resample from 8 kHz to 16 kHz
+        # Calculate the new number of samples
+        new_sample_rate = 16000
+        current_sample_rate = 8000
+        num_samples = int(len(processed_data) * (new_sample_rate / current_sample_rate))
+
+        # Resample the audio data
+        resampled_data = scipy.signal.resample(processed_data, num_samples)
+
+        return resampled_data
 
     def handle_new_connection(self, websocket, faster_whisper_custom_model_path,
                               whisper_tensorrt_path, trt_multilingual):
@@ -277,7 +287,7 @@ class TranscriptionServer:
         Continuously receives audio frames from a connected client
         over a WebSocket connection. It processes the audio frames using a
         voice activity detection (VAD) model to determine if they contain speech
-        or not. If the audio frame contains speech, it is added to the client's
+        or not. If the audio frame contins speech, it is added to the client's
         audio data for ASR.
         If the maximum number of clients is reached, the method sends a
         "WAIT" status to the client, indicating that they should wait
@@ -361,19 +371,23 @@ class TranscriptionServer:
                 after detecting no voice activity for more than three consecutive frames, it also triggers the
                 end-of-speech (EOS) flag for the client.
         """
-        # print(time.time())
-        # print(frame_np)
         if not self.vad_detector(frame_np):
             self.no_voice_activity_chunks += 1
             if self.no_voice_activity_chunks > 3:
                 client = self.client_manager.get_client(websocket)
                 if not client.eos:
                     logging.info("No voice activity detected. Setting EOS flag.")
+
+                    websocket.send(
+                    json.dumps({
+                        "uid": client.client_uid,
+                        "segments": None,
+                        "is_final": True
+                    })
+                    )
                     client.set_eos(True)
                 time.sleep(0.1)  # Sleep 100m; wait some voice activity.
-                # print('false')
             return False
-            # print('true')
         return True
 
     def cleanup(self, websocket):
@@ -538,9 +552,11 @@ class ServeClientBase(object):
                 json.dumps({
                     "uid": self.client_uid,
                     "segments": segments,
-                    "is_final": self.eos
+                    "is_final": False,
                 })
             )
+        # else:
+        #     logging.warning('Websocket connection is closed. Cannot send data.')
         except Exception as e:
             logging.error(f"[ERROR]: Sending data to client: {e}")
 
@@ -701,7 +717,7 @@ class ServeClientTensorRT(ServeClientBase):
             wav_file.setnchannels(1)  # Mono (adjust for stereo if needed)
             wav_file.setsampwidth(2)  # 16-bit samples (adjust for different bit depth)
             # Set framerate based on your audio stream (replace with actual value)
-            wav_file.setframerate(44100)  # Common sample rate (adjust if different)
+            wav_file.setframerate(16000)  # Common sample rate (adjust if different)
 
             frames = []  # List to store audio frames temporarily
             while True:
@@ -793,6 +809,7 @@ class ServeClientFasterWhisper(ServeClientBase):
             )
         )
 
+## TODO SEND EOS MESSAGE
     def set_eos(self, eos):
         """
         Sets the End of Speech (EOS) flag.

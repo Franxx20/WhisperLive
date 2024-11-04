@@ -43,7 +43,7 @@ class VoiceActivityDetection():
         # print(f'xshape  {x.shape[1]} value {sr/x.shape[1]}')
 
         if sr / x.shape[1] > 31.25:
-        # if sr / x.shape[1] > 50:
+            # if sr / x.shape[1] > 50:
             raise ValueError("Input audio chunk is too short")
 
         # print('i am here')
@@ -90,7 +90,7 @@ class VoiceActivityDetection():
 
         self.reset_states(x.shape[0])
         for i in range(0, x.shape[1], num_samples):
-            wavs_batch = x[:, i:i+num_samples]
+            wavs_batch = x[:, i:i + num_samples]
             out_chunk = self.__call__(wavs_batch, sr)
             outs.append(out_chunk)
 

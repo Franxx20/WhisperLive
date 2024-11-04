@@ -373,19 +373,19 @@ class TranscriptionServer:
         """
         if not self.vad_detector(frame_np):
             self.no_voice_activity_chunks += 1
-            if self.no_voice_activity_chunks > 3:
+            if self.no_voice_activity_chunks > 2:
                 client = self.client_manager.get_client(websocket)
                 if not client.eos:
                     logging.info("No voice activity detected. Setting EOS flag.")
 
-                    websocket.send(
-                    json.dumps({
-                        "uid": client.client_uid,
-                        "segments": None,
-                        "is_final": True
-                    })
-                    )
                     client.set_eos(True)
+                    websocket.send(
+                        json.dumps({
+                            "uid": client.client_uid,
+                            "segments": None,
+                            "is_final": True
+                        })
+                    )
                 time.sleep(0.1)  # Sleep 100m; wait some voice activity.
             return False
         return True
@@ -552,7 +552,8 @@ class ServeClientBase(object):
                 json.dumps({
                     "uid": self.client_uid,
                     "segments": segments,
-                    "is_final": False,
+                    "is_final": self.eos,
+                    # "is_final": False,
                 })
             )
         # else:
@@ -660,7 +661,7 @@ class ServeClientTensorRT(ServeClientBase):
             duration (float): Duration of the transcribed audio chunk.
         """
         segments = self.prepare_segments({"text": last_segment})
-        self.send_transcription_to_client(segments, self.eos)
+        self.send_transcription_to_client(segments)
         if self.eos:
             self.update_timestamp_offset(last_segment, duration)
 
@@ -711,41 +712,28 @@ class ServeClientTensorRT(ServeClientBase):
             Exception: If there is an issue with audio processing or WebSocket communication.
 
         """
-        wav_filename = "speech.wav"  # Customize the output filename
+        while True:
+            if self.exit:
+                logging.info("Exiting speech to text thread")
+                break
 
-        with wave.open(wav_filename, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono (adjust for stereo if needed)
-            wav_file.setsampwidth(2)  # 16-bit samples (adjust for different bit depth)
-            # Set framerate based on your audio stream (replace with actual value)
-            wav_file.setframerate(16000)  # Common sample rate (adjust if different)
+            if self.frames_np is None:
+                time.sleep(0.01)  # wait for any audio to arrive
+                continue
 
-            frames = []  # List to store audio frames temporarily
-            while True:
-                if self.exit:
-                    logging.info("Exiting speech to text thread")
-                    break
+            self.clip_audio_if_no_valid_segment()
 
-                if self.frames_np is None:
-                    time.sleep(0.02)  # wait for any audio to arrive
-                    # time.sleep(0.1)  # wait for any audio to arrive
-                    continue
+            input_bytes, duration = self.get_audio_chunk_for_processing()
+            if duration < 0.4:
+                continue
 
-                self.clip_audio_if_no_valid_segment()
+            try:
+                input_sample = input_bytes.copy()
+                logging.info(f"[WhisperTensorRT:] Processing audio with duration: {duration}")
+                self.transcribe_audio(input_sample)
 
-                input_bytes, duration = self.get_audio_chunk_for_processing()
-                if duration < 0.4:
-                    continue
-
-                try:
-                    input_sample = input_bytes.copy()
-                    logging.info(f"[WhisperTensorRT:] Processing audio with duration: {duration}")
-                    self.transcribe_audio(input_sample)
-                    frames.append(input_sample)
-
-                except Exception as e:
-                    logging.error(f"[ERROR]: {e}")
-            for frame in frames:
-                wav_file.writeframes(frame)
+            except Exception as e:
+                logging.error(f"[ERROR]: {e}")
 
 
 class ServeClientFasterWhisper(ServeClientBase):
@@ -809,7 +797,7 @@ class ServeClientFasterWhisper(ServeClientBase):
             )
         )
 
-## TODO SEND EOS MESSAGE
+    ## TODO SEND EOS MESSAGE
     def set_eos(self, eos):
         """
         Sets the End of Speech (EOS) flag.
@@ -931,9 +919,9 @@ class ServeClientFasterWhisper(ServeClientBase):
             self.t_start = None
             last_segment = self.update_segments(result, duration)
             segments = self.prepare_segments(last_segment)
-        else:
-            # show previous output if there is pause i.e. no output from whisper
-            segments = self.get_previous_output()
+        # else:
+        #     # show previous output if there is pause i.e. no output from whisper
+        #     segments = self.get_previous_output()
 
         if len(segments):
             self.send_transcription_to_client(segments)
@@ -955,44 +943,32 @@ class ServeClientFasterWhisper(ServeClientBase):
             Exception: If there is an issue with audio processing or WebSocket communication.
 
         """
-        wav_filename = "speech.wav"  # Customize the output filename
+        while True:
+            if self.exit:
+                logging.info("Exiting speech to text thread")
+                break
 
-        with wave.open(wav_filename, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono (adjust for stereo if needed)
-            wav_file.setsampwidth(1)  # 16-bit samples (adjust for different bit depth)
-            # Set framerate based on your audio stream (replace with actual value)
-            wav_file.setframerate(8000)  # Common sample rate (adjust if different)
+            if self.frames_np is None:
+                continue
 
-            frames = []  # List to store audio frames temporarily
-            while True:
-                if self.exit:
-                    logging.info("Exiting speech to text thread")
-                    break
+            self.clip_audio_if_no_valid_segment()
 
-                if self.frames_np is None:
+            input_bytes, duration = self.get_audio_chunk_for_processing()
+            if duration < 1.0:
+                continue
+            try:
+                input_sample = input_bytes.copy()
+                result = self.transcribe_audio(input_sample)
+
+                if result is None or self.language is None:
+                    self.timestamp_offset += duration
+                    time.sleep(0.25)  # wait for voice activity, result is None when no voice activity
                     continue
+                self.handle_transcription_output(result, duration)
 
-                self.clip_audio_if_no_valid_segment()
-
-                input_bytes, duration = self.get_audio_chunk_for_processing()
-                if duration < 1.0:
-                    continue
-                try:
-                    input_sample = input_bytes.copy()
-                    result = self.transcribe_audio(input_sample)
-
-                    if result is None or self.language is None:
-                        self.timestamp_offset += duration
-                        time.sleep(0.25)  # wait for voice activity, result is None when no voice activity
-                        continue
-                    frames.append(input_sample)
-                    self.handle_transcription_output(result, duration)
-
-                except Exception as e:
-                    logging.error(f"[ERROR]: Failed to transcribe audio chunk: {e}")
-                    time.sleep(0.01)
-            for frame in frames:
-                wav_file.writeframes(frame)
+            except Exception as e:
+                logging.error(f"[ERROR]: Failed to transcribe audio chunk: {e}")
+                time.sleep(0.01)
 
     def format_segment(self, start, end, text):
         """

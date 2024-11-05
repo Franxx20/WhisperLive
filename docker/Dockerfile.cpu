@@ -21,4 +21,7 @@ RUN apt update && bash setup.sh && pip install -r server.txt
 COPY whisper_live /app/whisper_live
 COPY run_server.py /app
 
-CMD ["python", "run_server.py"]
+EXPOSE 9090/tcp
+
+
+CMD ["python", "run_server.py", "--port", "9090", "--backend", "faster_whisper"]

@@ -36,3 +36,4 @@ if __name__ == "__main__":
         whisper_tensorrt_path=args.trt_model_path,
         trt_multilingual=args.trt_multilingual
     )
+    print('server is set up')
